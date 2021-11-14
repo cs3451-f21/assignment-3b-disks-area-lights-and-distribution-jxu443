@@ -318,7 +318,6 @@ class RayTracer {
 
     //ToDo: reflection recursion
     private traceRay(ray: Ray, depth: number = 0): Color {
-        //console.log("traceRay is called")
         if (this.geos.length == 0) {
             return this.backgroundColor
         }
@@ -336,8 +335,8 @@ class RayTracer {
                 }
             }
         }
-        //console.log(geoIdx)
-        if (geoIdx < 0) {
+
+        if (geoIdx < 0) { // no collision
             return this.backgroundColor;
         } else {
             return this.getColor(t, ray, this.geos[geoIdx])
@@ -351,8 +350,8 @@ class RayTracer {
         let distr: Sample[] = this.createDistribution()
         
         this.areaLights.forEach(aLight => {
-            var dTerm: Color = new Color(0,0,0)
-            var sTerm: Color = new Color(0,0,0)
+            var dTerm: Color = Color.black
+            var sTerm: Color = Color.black
             distr.forEach(sp => {
                 //p = c + su + tv
                 let lightPos = Vector.plus(Vector.plus(aLight.center, Vector.times(sp.s, aLight.u)), Vector.times(sp.t, aLight.v))
@@ -372,8 +371,8 @@ class RayTracer {
         });
         
         this.lights.forEach(light => { 
-            let [dTerm, sTerm] = this.getColorPtLight(ray.start, light.pos, pos, geo, light.color)
             if (!this.isBlocked(light.pos, pos)) {
+                let [dTerm, sTerm] = this.getColorPtLight(ray.start, light.pos, pos, geo, light.color)
                 diffuseTermSum = Color.plus(diffuseTermSum, dTerm)
                 specularTermSum = Color.plus(specularTermSum, sTerm)
             }
@@ -409,17 +408,15 @@ class RayTracer {
             start: Vector.plus(pos, Vector.times(0.001, Vector.norm(direction))),
             dir: direction
         }
+        let res: boolean = false;
         //let timeToLight = Vector.minus(lightPos, currRay.start).x / currRay.dir.x
         this.geos.forEach (geo => {
             let timeX = geo.collide(currRay)
-            // if no block 
             if (!Number.isNaN(timeX) && timeX < 1) {
-                console.log("return true")
-                return true;
-            } 
+                res = true;
+            }
         })
-        console.log("return false")
-        return false;
+        return res;
     }
 
 
