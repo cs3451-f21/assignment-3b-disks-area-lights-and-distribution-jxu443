@@ -91,6 +91,7 @@ class RayTracer {
     maxDepth = 5;
 
     //new class variables 
+    depth: number = 0
     geos: Geo[] = [];
     lights: Light[] = [];
     areaLights: AreaLight[] = []
@@ -317,7 +318,9 @@ class RayTracer {
     }
 
     //ToDo: reflection recursion
-    private traceRay(ray: Ray, depth: number = 0): Color {
+    private  traceRay(ray: Ray, depth: number = 0): Color {
+        if (!this.enableReflections) {depth = 0;}
+
         if (this.geos.length == 0) {
             return this.backgroundColor
         }
@@ -338,13 +341,29 @@ class RayTracer {
 
         if (geoIdx < 0) { // no collision
             return this.backgroundColor;
-        } else {
-            return this.getColor(t, ray, this.geos[geoIdx])
+        } 
+        
+        let pos = Vector.plus(ray.start,Vector.times(t, ray.dir))
+        let currGeo: Geo = this.geos[geoIdx];
+        var resColor: Color =  this.getColor(pos, ray, currGeo)
+        
+        if (depth > 0) {
+            let N = currGeo.getNorm(pos)
+            //R = 2 * N . L * N - L
+            let rayInDir = Vector.times(-1, ray.dir)
+            let rayRefDir = Vector.norm(Vector.minus(Vector.times(2*Vector.dot(N, rayInDir), N), rayInDir))
+            let rayRef = {
+                start: Vector.plus(pos, Vector.times(0.01, rayInDir)),
+                dir:rayRefDir
+            }
+
+            let reflected = lessEpsilon(currGeo.ka)? Color.black: Color.scale(currGeo.ks, this.traceRay(rayRef, depth - 1))
+            resColor = Color.plus(resColor, reflected)
         }
+        return resColor
     }
 
-    getColor(t: number, ray: Ray, geo: Geo): Color {
-        let pos = Vector.plus(ray.start,Vector.times(t, ray.dir))
+    getColor(pos: Vector, ray: Ray, geo: Geo): Color {
         var diffuseTermSum: Color = Color.black
         var specularTermSum: Color = Color.black
         let distr: Sample[] = this.createDistribution()
@@ -386,8 +405,9 @@ class RayTracer {
         
         return sum;
     }
-
-    getColorPtLight(eyePos: Vector, lightPos: Vector, pos: Vector, geo: Geo, lightColor: Color): [Color, Color] {
+    
+    //helper method
+    getColorPtLight (eyePos: Vector, lightPos: Vector, pos: Vector, geo: Geo, lightColor: Color): [Color, Color] {
         let N = geo.getNorm(pos)
         let V = Vector.norm(Vector.minus(eyePos,pos))
         let Li = Vector.norm(Vector.minus(lightPos, pos))
@@ -450,10 +470,10 @@ class RayTracer {
                 // on, and compute an average color for each pixel.
                 var c = Color.black
                 vecs.forEach(sp => {
-                    let disX = x + pixelWidth/2 * sp.s
-                    let disY = y + pixelHeight/2 * sp.t
+                    let disX = x + 0.5 * sp.s
+                    let disY = y + 0.5 * sp.t
                     let ray = this.eyeRay(disX, disY);
-                    c = Color.plus(c, this.traceRay(ray))
+                    c = Color.plus(c, this.traceRay(ray, 5))
                 })
                 var c = Color.scale(1/this.samples**2, c);
     
