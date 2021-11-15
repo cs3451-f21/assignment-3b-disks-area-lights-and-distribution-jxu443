@@ -168,8 +168,12 @@ class RayTracer {
               nx: number, ny: number, nz: number, dr: number, dg: number, db: number, 
               k_ambient: number, k_specular: number, specular_pow: number,
               vx?: number, vy?: number, vz?: number) {
+                let velocityVector = new Vector(0,0,0)
+                if (vx != undefined && vy != undefined && vz != undefined) {
+                    velocityVector = new Vector(vx,vy,vz)
+                }
                 let disk = new Disk(radius, new Vector(x,y,z), new Vector(nx, ny, nz),
-                 new Color(dr, dg, db), k_ambient, k_specular, specular_pow)
+                 new Color(dr, dg, db), k_ambient, k_specular, specular_pow, velocityVector)
                 this.geos.push(disk)
     }
 
@@ -289,8 +293,15 @@ class RayTracer {
                 dr: number, dg: number, db: number, 
                 k_ambient: number, k_specular: number, specular_pow: number, 
                 vx?: number, vy?: number, vz?: number) {
+                    let velocityVector = new Vector(0,0,0)
+                    console.log("new_sphere is called")
+                    if (vx != undefined && vy != undefined && vz != undefined) {
+                        velocityVector = new Vector(vx,vy,vz)
+                        console.log("lol")
+                    }
+
                     let sp = new Sphere(radius, new Vector(x,y,z), new Color(dr, dg, db), 
-                                k_ambient, k_specular, specular_pow)
+                                k_ambient, k_specular, specular_pow, velocityVector)
                     this.geos.push(sp)
     }
 
@@ -318,8 +329,9 @@ class RayTracer {
     }
 
     //ToDo: reflection recursion
-    private  traceRay(ray: Ray, depth: number = 0): Color {
+    private  traceRay(ray: Ray, distributedTime: number, depth: number = 0): Color {
         if (!this.enableReflections) {depth = 0;}
+        if (!this.enableBlur) {distributedTime = 0;}
 
         if (this.geos.length == 0) {
             return this.backgroundColor
@@ -328,9 +340,9 @@ class RayTracer {
         var geoIdx = -1;
         // find the closest valid time t
         for (let i = 0; i < this.geos.length; i++) {
-            let currGeo = this.geos[i];
-            let time = currGeo.collide(ray)
-
+            //let currGeo = this.geos[i];
+            this.geos[i].update(distributedTime)
+            let time = this.geos[i].collide(ray)
             if (!Number.isNaN(time)) {
                 if (time < t) {
                     t = time;
@@ -345,7 +357,7 @@ class RayTracer {
         
         let pos = Vector.plus(ray.start,Vector.times(t, ray.dir))
         let currGeo: Geo = this.geos[geoIdx];
-        var resColor: Color =  this.getColor(pos, ray, currGeo)
+        var resColor: Color =  this.getColor(pos, ray, currGeo, distributedTime)
         
         if (depth > 0) {
             let N = currGeo.getNorm(pos)
@@ -357,13 +369,13 @@ class RayTracer {
                 dir:rayRefDir
             }
 
-            let reflected = lessEpsilon(currGeo.ka)? Color.black: Color.scale(currGeo.ks, this.traceRay(rayRef, depth - 1))
+            let reflected = lessEpsilon(currGeo.ka)? Color.black: Color.scale(currGeo.ks, this.traceRay(rayRef, distributedTime, depth - 1))
             resColor = Color.plus(resColor, reflected)
         }
         return resColor
     }
 
-    getColor(pos: Vector, ray: Ray, geo: Geo): Color {
+    getColor(pos: Vector, ray: Ray, geo: Geo, time: number): Color {
         var diffuseTermSum: Color = Color.black
         var specularTermSum: Color = Color.black
         let distr: Sample[] = this.createDistribution()
@@ -376,7 +388,7 @@ class RayTracer {
                 let lightPos = Vector.plus(Vector.plus(aLight.center, Vector.times(sp.s, aLight.u)), Vector.times(sp.t, aLight.v))
                 let [diffse, specular] = this.getColorPtLight(ray.start, lightPos, pos, geo, aLight.color)
                 
-                if (!this.isBlocked(lightPos, pos)) {
+                if (!this.isBlocked(lightPos, pos, time)) {
                     dTerm = Color.plus(dTerm, diffse)
                     if (Color.lightness(sTerm) < Color.lightness(specular)) {
                         sTerm = specular //pick the max specular term
@@ -390,7 +402,7 @@ class RayTracer {
         });
         
         this.lights.forEach(light => { 
-            if (!this.isBlocked(light.pos, pos)) {
+            if (!this.isBlocked(light.pos, pos, time)) {
                 let [dTerm, sTerm] = this.getColorPtLight(ray.start, light.pos, pos, geo, light.color)
                 diffuseTermSum = Color.plus(diffuseTermSum, dTerm)
                 specularTermSum = Color.plus(specularTermSum, sTerm)
@@ -420,7 +432,7 @@ class RayTracer {
         return [diffuseTerm, specularTerm]
     }
 
-    isBlocked(lightPos: Vector, pos: Vector): boolean {
+    isBlocked(lightPos: Vector, pos: Vector, time: number): boolean {
         //check any geo in between pos and lightPos
         //let direction = Vector.norm(Vector.minus(lightPos, pos))
         let direction = Vector.minus(lightPos, pos)
@@ -473,7 +485,8 @@ class RayTracer {
                     let disX = x + 0.5 * sp.s
                     let disY = y + 0.5 * sp.t
                     let ray = this.eyeRay(disX, disY);
-                    c = Color.plus(c, this.traceRay(ray, 5))
+                    let time = -1 + 2* Math.random()
+                    c = Color.plus(c, this.traceRay(ray, time, 5))
                 })
                 var c = Color.scale(1/this.samples**2, c);
     
@@ -522,18 +535,24 @@ class Geo {
     ka: number; //k_ambient
     ks: number; //k_specular
     specular_pow: number; //pi
+    velocityVector: Vector; //velocity vector
+    originalCenter: Vector;
     // vx, vy, vz optional params for motion blur
 
     constructor(r: number, center: Vector, kd: Color, 
-        k_ambient: number, k_specular: number, specular_pow: number) {
+        k_ambient: number, k_specular: number, specular_pow: number,
+        velocityVector: Vector) {
         this.radius = r;
         this.center = center;
+        this.originalCenter = center;
         this.kd = kd
         this.ka = k_ambient;
         this.ks = k_specular;
         this.specular_pow = specular_pow;
+        this.velocityVector = velocityVector;
     }
 
+    update(time: number) {return;}
     collide(ray: Ray): number{return NaN;}
     getNorm(pos: Vector): Vector {return new Vector(0,0,0)}
 
@@ -543,9 +562,14 @@ class Disk extends Geo{
     norm: Vector;
 
     constructor(r: number, center: Vector, norm: Vector, kd: Color, 
-        k_ambient: number, k_specular: number, specular_pow: number) {
-        super(r, center, kd, k_ambient, k_specular, specular_pow)
+        k_ambient: number, k_specular: number, specular_pow: number,
+        velocityVector: Vector) {
+        super(r, center, kd, k_ambient, k_specular, specular_pow, velocityVector)
         this.norm = norm
+    }
+
+    update(time: number) {
+        this.center = Vector.plus(this.originalCenter, Vector.times(time, this.velocityVector))
     }
 
     collide(ray: Ray): number {
@@ -562,8 +586,13 @@ class Disk extends Geo{
 
 class Sphere extends Geo {
     constructor(r: number, center: Vector, kd: Color, 
-        k_ambient: number, k_specular: number, specular_pow: number) {
-            super(r, center, kd, k_ambient, k_specular, specular_pow)
+        k_ambient: number, k_specular: number, specular_pow: number,
+        velocityVector: Vector) {
+            super(r, center, kd, k_ambient, k_specular, specular_pow, velocityVector)
+    }
+
+    update(time: number) {
+        this.center = Vector.plus(this.originalCenter, Vector.times(time, this.velocityVector))
     }
 
     collide(ray: Ray): number {
